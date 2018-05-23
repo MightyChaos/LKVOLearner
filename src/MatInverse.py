@@ -64,31 +64,8 @@ def inv_batch(input):
 
 
 if __name__ == "__main__":
-    # batch_size = 2
-    # pt_num = 2*2
-    # feat_chan = 3
-    # target_grad_x = Variable(torch.randn(feat_chan, pt_num))
-    # target_grad_y = Variable(torch.randn(feat_chan, pt_num))
-    # temporal_grad = Variable(torch.randn(batch_size, feat_chan, pt_num))
-    # inv_depth = Variable(torch.randn(pt_num), requires_grad=True)
-    # mask = Variable(torch.randn(batch_size, pt_num))
-    # xy = Variable(torch.randn(2, pt_num))
-    # s = timer()
-    # dp = lkvolayer(target_grad_x, target_grad_y, temporal_grad, inv_depth, mask, xy)
-    # print(timer()-s)
-    # c = dp.norm()*100
-    # c.backward()
-    # print(timer()-s)
-    # print(c)
-    # print(inv_depth.grad)
-
-    # print(temporal_grad.grad)
-
-    # input = (target_grad_x, target_grad_y, temporal_grad, inv_depth, mask, xy)
 
     W = torch.rand(2,2)
-
-    # A = Variable(W.bmm(W.transpose(1,2)), requires_grad=True)
     s = timer()
     invH = inv(Variable(W, requires_grad=True))
     print(timer() - s)
@@ -98,9 +75,3 @@ if __name__ == "__main__":
     print(timer()-s)
     test = gradcheck(inv, (Variable(W, requires_grad=True),), eps=1e-5, atol=1e-4)
     print(test)
-# print(inv_depth.size())
-# print(dp)
-# c = dp.norm()
-# print(c)
-# c.backward()
-

@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from torch import optim
 from torch.nn import AvgPool2d
-from ImagePyramid import ImagePyramidLayer, ImageSmoothLayer
+from ImagePyramid import ImagePyramidLayer
 from BilinearSampling import grid_bilinear_sampling
 from MatInverse import inv
 import os
@@ -140,8 +140,8 @@ class Twist2Mat(nn.Module):
 
     def forward(self, twist_batch):
         batch_size, _ = twist_batch.size()
-        rot_angle = twist_batch.norm(p=2, dim=1).view(batch_size, 1)
-        rot_axis = twist_batch / (rot_angle + 1e-10).expand(batch_size, 3)
+        rot_angle = twist_batch.norm(p=2, dim=1).view(batch_size, 1).clamp(min=1e-10)
+        rot_axis = twist_batch / rot_angle.expand(batch_size, 3)
         A = self.cprodmat_batch(rot_axis)
         return Variable(self.E).view(1, 3, 3).expand(batch_size, 3, 3)\
             + A*rot_angle.sin().view(batch_size, 1, 1).expand(batch_size, 3, 3)\
@@ -190,15 +190,17 @@ def compute_photometric_cost(img_diff, mask):
 
 def compute_photometric_cost_norm(img_diff, mask):
     # cost = ((img0.expand_as(img1) - img1) * mask).abs().sum()
-    k = img_diff.size(1)
-    batch_size = img_diff.size(0)
-    mask_ = mask.view(batch_size, 1, -1).expand_as(img_diff)
-    # mask_ = mask.view(batch_size, 1, -1).repeat(1, k, 1)
-    cost = img_diff.abs() * mask_
-    num_in_view = mask.sum()
-    cost_norm = cost.contiguous().sum() / (num_in_view+1e-10)
+    # k = img_diff.size(1)
+    # batch_size = img_diff.size(0)
+    # mask_ = mask.view(batch_size, 1, -1).expand_as(img_diff)
+
+    cost = img_diff.abs().sum(1) * mask
+    # cost = img_diff.abs() * mask_
+    num_in_view = mask.sum(1)
+    # cost_norm = cost.contiguous().sum() / (num_in_view+1e-10)
+    cost_norm = cost.sum(1) / (num_in_view+1e-10)
     # print(mask.size())
-    return cost_norm * (1 / 127.5), num_in_view / mask.numel()
+    return cost_norm * (1 / 127.5), (num_in_view / mask.size(1)).min()
 
 # def compute_feat_cost(feat_diff, mask):
 #     k = feat_diff.size(1)
@@ -292,7 +294,6 @@ class DirectVO(nn.Module):
         self.img_gradient_func = GradientLayer()
         self.pyramid_func = ImagePyramidLayer(chan=3,
                                 pyramid_layer_num=self.pyramid_layer_num)
-        self.image_smooth_func = ImageSmoothLayer(chan=3)
         self.laplacian_func = LaplacianLayer()
 
         x_pyramid, y_pyramid = self.pyramid_func.get_coords(self.imH, self.imW)
@@ -431,8 +432,8 @@ class DirectVO(nn.Module):
         xyz = R_batch[:, :, 0:2].bmm(xy.view(1, 2, N).expand(batch_size, 2, N))\
             + R_batch[:, :, 2:3].expand(batch_size, 3, N)\
             + t_batch.view(batch_size, 3, 1).expand(batch_size, 3, N) * inv_depth.view(-1, 1, N).expand(batch_size, 3, N)
-
-        xy_warp = xyz[:, 0:2, :] / xyz[:, 2:3, :].expand(batch_size, 2, N)
+        z = xyz[:, 2:3, :].clamp(min=1e-10)
+        xy_warp = xyz[:, 0:2, :] / z.expand(batch_size, 2, N)
         # u_warp = ((xy_warp[:, 0, :]*self.camparams['fx'] + self.camparams['cx'])/2**level_idx - .5).view(batch_size, N)
         # v_warp = ((xy_warp[:, 1, :]*self.camparams['fy'] + self.camparams['cy'])/2**level_idx - .5).view(batch_size, N)
         # print(self.x_pyramid[level_idx][0])
@@ -591,79 +592,6 @@ class DirectVO(nn.Module):
 
         return loss, loss, frames_warp_pyramid, ref_frame_warp_pyramid
 
-    # def compute_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid, rot_mat_batch, trans_batch, use_backproj=True, use_ssim=True, levels=None):
-    #     bundle_size = rot_mat_batch.size(0)+1
-    #     inv_rot_mat_batch, inv_trans_batch = inv_rigid_transformation(rot_mat_batch, trans_batch)
-    #     src_pyramid = []
-    #     ref_pyramid = []
-    #     depth_pyramid = []
-    #     if levels is None:
-    #         levels = range(self.pyramid_layer_num)
-    #     # for level_idx in range(len(ref_frames_pyramid)):
-    #     for level_idx in levels:
-    #     # for level_idx in range(3):
-    #         ref_frame = ref_frames_pyramid[level_idx].unsqueeze(0).repeat(bundle_size-1, 1, 1, 1)
-    #         src_frame = src_frames_pyramid[level_idx]
-    #         ref_depth = ref_inv_depth_pyramid[level_idx].unsqueeze(0).repeat(bundle_size-1, 1, 1)
-    #         src_depth = src_inv_depth_pyramid[level_idx]
-    #         # print(src_depth.size())
-    #         ref_pyramid.append(torch.cat((ref_frame,
-    #                                 src_frame,
-    #                                 src_frame[(0,bundle_size-2), :, :, :]), 0)/127.5)
-    #         src_pyramid.append(torch.cat((src_frame,
-    #                                 ref_frame,
-    #                                 src_frame[(bundle_size-2,0), :, :, :]), 0)/127.5)
-    #         depth_pyramid.append(torch.cat((ref_depth,
-    #                                 src_depth,
-    #                                 src_depth[(0,bundle_size-2), :, :]),0))
-    #
-    #
-    #     rot_mat = torch.cat((rot_mat_batch,
-    #                         inv_rot_mat_batch,
-    #                         rot_mat_batch[(bundle_size-2,0), :, :].bmm(inv_rot_mat_batch[(0, bundle_size-2), :, :])) ,0)
-    #     trans = torch.cat((trans_batch,
-    #                        inv_trans_batch,
-    #                        rot_mat_batch[(bundle_size-2,0), :, :].bmm(inv_trans_batch[(0,bundle_size-2),:].unsqueeze(-1)).squeeze(-1)
-    #                             + trans_batch[(bundle_size-2,0), :]), 0)
-    #
-    #     loss = 0
-    #
-    #     frames_warp_pyramid = []
-    #     ref_frame_warp_pyramid = []
-    #
-    #     # for level_idx in range(len(ref_pyramid)):
-    #     # for level_idx in range(3):
-    #     for level_idx in levels:
-    #         # print(depth_pyramid[level_idx].size())
-    #         _, h, w = depth_pyramid[level_idx].size()
-    #         warp_img, in_view_mask = self.warp_batch_func(
-    #                 src_pyramid[level_idx],
-    #                 depth_pyramid[level_idx],
-    #                 level_idx, rot_mat, trans)
-    #         warp_img = warp_img.view((bundle_size-1)*2+2, IMG_CHAN, h, w)
-    #         in_view_mask_expand = in_view_mask.view((bundle_size-1)*2+2, 1, h, w).expand((bundle_size-1)*2+2, IMG_CHAN, h, w)
-    #         rgb_loss = ((ref_pyramid[level_idx] - warp_img).abs()*in_view_mask_expand).mean()
-    #         if use_ssim and level_idx<1:
-    #             # print("compute ssim loss------")
-    #             warp_mu, warp_sigma = compute_img_stats(warp_img)
-    #             ref_mu, ref_sigma = compute_img_stats(ref_pyramid[level_idx])
-    #             ssim = compute_SSIM(ref_pyramid[level_idx],
-    #                             ref_mu,
-    #                             ref_sigma,
-    #                             warp_img,
-    #                             warp_mu,
-    #                             warp_sigma)
-    #             ssim_loss = (ssim*in_view_mask_expand[:,:,1:-1,1:-1]).mean()
-    #             loss += .85*ssim_loss+.15*rgb_loss
-    #         else:
-    #             loss += rgb_loss
-    #
-    #         frames_warp_pyramid.append(warp_img*127.5)
-    #         ref_frame_warp_pyramid.append(ref_pyramid[level_idx]*127.5)
-    #
-    #     return loss, loss, frames_warp_pyramid, ref_frame_warp_pyramid
-
-
     def compute_smoothness_cost(self, inv_depth):
         x = self.laplacian_func(inv_depth)
         return x.mean()
@@ -671,16 +599,11 @@ class DirectVO(nn.Module):
     def compute_image_aware_laplacian_smoothness_cost(self, depth, img):
         img_lap = self.laplacian_func(img/255, do_normalize=False)
         depth_lap = self.laplacian_func(depth, do_normalize=False)
-        # depth_lap += self.laplacian_func(depth, do_normalize=False) / (8*depth.mean()+.01)
-        # inv_depth_lap = self.laplacian_func(1/(depth+.1), do_normalize=True)
-        # print(img_lap.size())
-        # print(img.size())
         x = (-img_lap.mean(1)).exp()*(depth_lap)
         return x.mean()
 
     def compute_image_aware_2nd_smoothness_cost(self, depth, img):
         img_lap = self.laplacian_func(img/255, do_normalize=False)
-        # depth_grad_x, depth_grad_y = gradient(depth, do_normalize=True)
         depth_grad_x, depth_grad_y = gradient(depth, do_normalize=False)
         depth_grad_x2, depth_grad_xy = gradient(depth_grad_x, do_normalize=False)
         depth_grad_yx, depth_grad_y2 = gradient(depth_grad_y, do_normalize=False)
@@ -755,146 +678,130 @@ class DirectVO(nn.Module):
         in_view_mask = []
 
         cur_time = timer()
-        # frames_pyramid = self.pyramid_func(frames)
 
         for level_idx in range(self.pyramid_layer_num-1, -1, -1):
-        # for level_idx in [3, 2, 1, 0]:
-            # print(level_idx)
-            max_photometric_cost = np.Inf
+
+            max_photometric_cost = self.o.squeeze().expand(frame_num)+10000
             # print(level_idx)
             for i in range(max_itr_num):
+                # print(i)
                 # cur_time = timer()
                 pixel_warp, in_view_mask = self.warp_batch(frames_pyramid[level_idx], level_idx, rot_mat_batch, trans_batch)
                 # t_warp += timer()-cur_time
 
                 temporal_grad = pixel_warp - self.ref_frame_pyramid[level_idx].view(3, -1).unsqueeze(0).expand_as(pixel_warp)
 
-                # cur_time = timer()
-                photometric_cost, perc_in_view = compute_photometric_cost_norm(temporal_grad.data, in_view_mask.data)
-                # print(perc_in_view)
-                if perc_in_view < .5:
+                photometric_cost, min_perc_in_view = compute_photometric_cost_norm(temporal_grad.data, in_view_mask.data)
+                # print(photometric_cost)
+                # print(max_photometric_cost)
+                # print(min_perc_in_view)
+                # print((photometric_cost < max_photometric_cost).max())
+                if min_perc_in_view < .5:
                     break
-                # t_cost += timer()-cur_time
 
-                if photometric_cost < max_photometric_cost:
+                if (photometric_cost < max_photometric_cost).max()>0:
                     # print(photometric_cost)
-                    max_photometric_cost = photometric_cost
-
-
                     trans_batch_prev = trans_batch
 
                     rot_mat_batch_prev = rot_mat_batch
 
-                    # cur_time = timer()
-                    # dp = self.LKregress(invH=self.invH_pyramid[level_idx],
-                    #                     dIdp=self.dIdp_pyramid[level_idx],
-                    #                     mask=in_view_mask,
-                    #                     It=temporal_grad)
                     dp = self.LKregress(invH_dIdp=self.invH_dIdp_pyramid[level_idx],
                                         mask=in_view_mask,
                                         It=temporal_grad)
-                    # t_regress += timer()-cur_time
 
-                    # cur_time = timer()
                     d_rot_mat_batch = self.twist2mat_batch_func(-dp[:, 0:3])
-                    # t_twist_to_rot+= timer()-cur_time
+                    trans_batch_new = d_rot_mat_batch.bmm(trans_batch.view(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
+                    rot_mat_batch_new = d_rot_mat_batch.bmm(rot_mat_batch)
 
-                    trans_batch = d_rot_mat_batch.bmm(trans_batch.view(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
-                    rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch)
-
-                    # print(photometric_cost)
-
+                    trans_list = []
+                    rot_list = []
+                    for k in range(frame_num):
+                        if photometric_cost[k] < max_photometric_cost[k]:
+                            rot_list.append(rot_mat_batch_new[k:k+1, :, :])
+                            trans_list.append(trans_batch_new[k:k+1, :])
+                            max_photometric_cost[k] = photometric_cost[k]
+                        else:
+                            rot_list.append(rot_mat_batch[k:k+1, :, :])
+                            trans_list.append(trans_batch[k:k+1, :])
+                    rot_mat_batch = torch.cat(rot_list, 0)
+                    trans_batch = torch.cat(trans_list, 0)
+                    # if photometric_cost[k] < max_photometric_cost[k]:
+                    #     trans_batch = d_rot_mat_batch.bmm(trans_batch.view(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
+                    #     rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch)
                 else:
-                    # rot_mat_batch = rot_mat_batch_prev
-                    # trans_batch = trans_batch_prev
                     break
             rot_mat_batch = rot_mat_batch_prev
             trans_batch = trans_batch_prev
-        # print("time spend on twist")
-        # print(t_twist_to_rot)
-        # print("time spend on warp")
-        # print(t_warp)
-        # print("time spend on cost")
-        # print(t_cost)
-        # print("time spend on build pyramid")
-        # print(t_pyramid)
-        # print("time spend on regress")
-        # print(t_regress)
+
         return rot_mat_batch, trans_batch, frames_pyramid
 
-
-    def update2(self, frames, init_rot_mat_batch = None, init_trans_batch = None):
-        frame_num, k, h, w = frames.size()
-        if init_rot_mat_batch is None or init_trans_batch is None:
-
-            trans_batch = Variable(self.o).expand(frame_num, 3).contiguous()
-            trans_batch_prev = Variable(self.o).expand(frame_num, 3).contiguous()
-
-            rot_mat_batch = Variable(self.E).unsqueeze(0).expand(frame_num, 3, 3).contiguous()
-            rot_mat_batch_prev = Variable(self.E).unsqueeze(0).expand(frame_num, 3, 3).contiguous()
-        else:
-            trans_batch = init_trans_batch
-            trans_batch_prev = init_trans_batch
-
-            rot_mat_batch = init_rot_mat_batch
-            rot_mat_batch_prev = init_rot_mat_batch
+    def update_with_init_pose(self, frames_pyramid, rot_mat_batch, trans_batch, max_itr_num=10):
+        frame_num, k, h, w = frames_pyramid[0].size()
+        trans_batch_prev = trans_batch
+        rot_mat_batch_prev = rot_mat_batch
 
         pixel_warp = []
         in_view_mask = []
 
         cur_time = timer()
-        frames_pyramid = self.pyramid_func(frames)
-        # frames_pyramid[0] = self.image_smooth_func(frames_pyramid[0])
 
-        for level_idx in range(self.pyramid_layer_num-1, -1, -1):
-            max_photometric_cost = np.Inf
-            print(level_idx)
-            step = 1
-            for i in range(self.max_itr_num):
+        for level_idx in range(len(frames_pyramid)-1, -1, -1):
+
+            max_photometric_cost = self.o.squeeze().expand(frame_num)+10000
+            # print(level_idx)
+            for i in range(max_itr_num):
+                # print(i)
+                # cur_time = timer()
                 pixel_warp, in_view_mask = self.warp_batch(frames_pyramid[level_idx], level_idx, rot_mat_batch, trans_batch)
+                # t_warp += timer()-cur_time
 
                 temporal_grad = pixel_warp - self.ref_frame_pyramid[level_idx].view(3, -1).unsqueeze(0).expand_as(pixel_warp)
 
-                photometric_cost, perc_in_view = compute_photometric_cost_norm(temporal_grad.data, in_view_mask.data)
-                # print(perc_in_view)
-                if perc_in_view < .5:
+                photometric_cost, min_perc_in_view = compute_photometric_cost_norm(temporal_grad.data, in_view_mask.data)
+                # print(photometric_cost)
+                # print(max_photometric_cost)
+                # print(min_perc_in_view)
+                # print((photometric_cost < max_photometric_cost).max())
+                if min_perc_in_view < .5:
                     break
 
-                if photometric_cost < max_photometric_cost:
-                    print(photometric_cost)
-                    step = 1
-                    max_photometric_cost = photometric_cost
-
-
+                if (photometric_cost < max_photometric_cost).max()>0:
+                    # print(photometric_cost)
+                    # print(i)
+                    # print(photometric_cost)
                     trans_batch_prev = trans_batch
-
                     rot_mat_batch_prev = rot_mat_batch
-
 
                     dp = self.LKregress(invH_dIdp=self.invH_dIdp_pyramid[level_idx],
                                         mask=in_view_mask,
                                         It=temporal_grad)
 
-                    d_rot_mat_batch = self.twist2mat_batch_func(-dp[:, 0:3])
+                    # d_rot_mat_batch = self.twist2mat_batch_func(-dp[:, 0:3])
+                    d_rot_mat_batch = self.twist2mat_batch_func(dp[:, 0:3]).transpose(1,2)
+                    trans_batch_new = d_rot_mat_batch.bmm(trans_batch.view(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
+                    rot_mat_batch_new = d_rot_mat_batch.bmm(rot_mat_batch)
 
-                    trans_batch = d_rot_mat_batch.bmm(trans_batch.view(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
-                    rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch)
-
+                    trans_list = []
+                    rot_list = []
+                    for k in range(frame_num):
+                        if photometric_cost[k] < max_photometric_cost[k]:
+                            rot_list.append(rot_mat_batch_new[k:k+1, :, :])
+                            trans_list.append(trans_batch_new[k:k+1, :])
+                            max_photometric_cost[k] = photometric_cost[k]
+                        else:
+                            rot_list.append(rot_mat_batch[k:k+1, :, :])
+                            trans_list.append(trans_batch[k:k+1, :])
+                    rot_mat_batch = torch.cat(rot_list, 0)
+                    trans_batch = torch.cat(trans_list, 0)
+                    # if photometric_cost[k] < max_photometric_cost[k]:
+                    #     trans_batch = d_rot_mat_batch.bmm(trans_batch.viewd_rot_mat_batch = self.twist2mat_batch_func(-dp[:, 0:3])(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
+                    #     rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch)
                 else:
                     break
-                    # dp_ = dp*step
-                    # if step < .001:
-                    #     break
-                    # step = step*.5
-                    # dp_ = dp*step
-                    # d_rot_mat_batch = self.twist2mat_batch_func(-dp_[:, 0:3])
-                    # trans_batch = d_rot_mat_batch.bmm(trans_batch_prev.view(frame_num, 3, 1)).view(frame_num, 3) - dp_[:, 3:6]
-                    # rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch_prev)
-
-
             rot_mat_batch = rot_mat_batch_prev
             trans_batch = trans_batch_prev
-        return rot_mat_batch, trans_batch, frames_pyramid
+
+        return rot_mat_batch, trans_batch
 
 
     def forward(self, ref_frame_pyramid, src_frame_pyramid, ref_inv_depth_pyramid, max_itr_num=10):

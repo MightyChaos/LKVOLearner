@@ -1,4 +1,4 @@
-from DirectVOLayer2 import DirectVO
+from DirectVOLayer import DirectVO
 from networks import VggDepthEstimator
 from ImagePyramid import ImagePyramidLayer
 import torch.nn as nn
@@ -16,7 +16,7 @@ class FlipLR(nn.Module):
 
 
     def forward(self, input):
-        return input.index_select(self.dim_w, self.inv_indices)
+        return input.index_select(self.dim_w, Variable(self.inv_indices))
 
 
 

@@ -31,7 +31,7 @@ EXPNAME=posenet
 CHECKPOINT_DIR=$PWD/checkpoints/$EXPNAME
 mkdir checkpoints_dir
 DATAROOT_DIR=$PWD/data_kitti
-CUDA_VISIBLE_DEVICES=0 python3 train_main_sfmlearner.py --dataroot $DATAROOT_DIR --checkpoints_dir $CHECKPOINT_DIR --which_epoch -1 --save_latest_freq 1000 --batchSize 1 --display_freq 50 --name $EXPNAME --lambda_S 0.01 --smooth_term 2nd --use_ssim
+CUDA_VISIBLE_DEVICES=0 python3 train_main_posenet.py --dataroot $DATAROOT_DIR --checkpoints_dir $CHECKPOINT_DIR --which_epoch -1 --save_latest_freq 1000 --batchSize 1 --display_freq 50 --name $EXPNAME --lambda_S 0.01 --smooth_term 2nd --use_ssim
 ```
 ## train from scratch with DDVO
 ```
