@@ -32,31 +32,6 @@ def inv_rigid_transformation(rot_mat_batch, trans_batch):
     inv_trans_batch = -inv_rot_mat_batch.bmm(trans_batch.unsqueeze(-1)).squeeze(-1)
     return inv_rot_mat_batch, inv_trans_batch
 
-def cprodmat_batch(a_batch):
-    batch_size, _ = a_batch.size()
-    if a_batch.is_cuda:
-        o = Variable(torch.zeros(batch_size, 1).cuda(device=a_batch.get_device()))
-    else:
-        o = Variable(torch.zeros(batch_size, 1))
-    a0 = a_batch[:, 0:1]
-    a1 = a_batch[:, 1:2]
-    a2 = a_batch[:, 2:3]
-    return torch.cat((o, -a2, a1, a2, o, -a0, -a1, a0, o), 1).view(batch_size, 3, 3)
-
-
-def twist2mat_batch(twist_batch):
-    batch_size, _ = twist_batch.size()
-    rot_angle = twist_batch.norm(p=2, dim=1).view(batch_size, 1)
-    rot_axis = twist_batch / (rot_angle + 1e-10).expand(batch_size, 3)
-    A = cprodmat_batch(rot_axis)
-    if twist_batch.is_cuda:
-        E = Variable(torch.eye(3).cuda(device=twist_batch.get_device()))
-    else:
-        E = Variable(torch.eye(3))
-    return E.view(1, 3, 3).expand(batch_size, 3, 3)\
-        + A*rot_angle.sin().view(batch_size, 1, 1).expand(batch_size, 3, 3)\
-        + A.bmm(A)*(1-rot_angle.cos().view(batch_size, 1, 1).expand(batch_size, 3, 3))
-
 class LaplacianLayer(nn.Module):
     def __init__(self):
         super(LaplacianLayer, self).__init__()
@@ -140,7 +115,7 @@ class Twist2Mat(nn.Module):
 
     def forward(self, twist_batch):
         batch_size, _ = twist_batch.size()
-        rot_angle = twist_batch.norm(p=2, dim=1).view(batch_size, 1).clamp(min=1e-10)
+        rot_angle = twist_batch.norm(p=2, dim=1).view(batch_size, 1).clamp(min=1e-5)
         rot_axis = twist_batch / rot_angle.expand(batch_size, 3)
         A = self.cprodmat_batch(rot_axis)
         return Variable(self.E).view(1, 3, 3).expand(batch_size, 3, 3)\
@@ -238,45 +213,6 @@ def gradient(input, do_normalize=False):
         Dx = Dx / (D_rx + D_lx)
         Dy = Dy / (D_ry + D_ly)
     return Dx, Dy
-
-
-
-def compute_smoothness_cost(inv_depth):
-    inv_depth_ = inv_depth * (5/(inv_depth.mean()+1e-10))
-
-    depth_grad_x, depth_grad_y = gradient(inv_depth_)
-    depth_grad_x2, depth_grad_xy = gradient(depth_grad_x)
-    depth_grad_yx, depth_grad_y2 = gradient(depth_grad_y)
-    return depth_grad_x2.abs().mean() \
-        + depth_grad_xy.abs().mean() + depth_grad_yx.abs().mean() + depth_grad_y2.abs().mean()
-
-# def compute_smoothness_cost(inv_depth):
-#     inv_depth_ = inv_depth * (5/(inv_depth.mean()+1e-10))
-#
-#     depth_grad_x, depth_grad_y = gradient(inv_depth_)
-#     depth_grad_x2, depth_grad_xy = gradient(depth_grad_x)
-#     depth_grad_yx, depth_grad_y2 = gradient(depth_grad_y)
-#     return depth_grad_x2.abs().mean() \
-#         + depth_grad_xy.abs().mean() + depth_grad_yx.abs().mean() + depth_grad_y2.abs().mean()
-#
-#
-def compute_img_aware_smoothness_cost(inv_depth, img):
-    inv_depth_ = inv_depth * (5/(inv_depth.mean()+1e-10))
-    # print(inv_depth_.size())
-    # print(img.size())
-    depth_grad_x, depth_grad_y = gradient(inv_depth_, do_normalize=True)
-
-    img_grad_x, img_grad_y = gradient(img/255)
-    if img.dim() == 3:
-        weight_x = torch.exp(-img_grad_x.abs().mean(0))
-        weight_y = torch.exp(-img_grad_y.abs().mean(0))
-        cost = ((depth_grad_x.abs() * weight_x)[:-1, :] + (depth_grad_y.abs() * weight_y)[:, :-1]).mean()
-    else:
-        weight_x = torch.exp(-img_grad_x.abs().mean(1))
-        weight_y = torch.exp(-img_grad_y.abs().mean(1))
-        cost = ((depth_grad_x.abs() * weight_x)[:, :-1, :] + (depth_grad_y.abs() * weight_y)[:, :, :-1]).mean()
-    return cost
-
 
 
 
@@ -445,86 +381,6 @@ class DirectVO(nn.Module):
         Q, in_view_mask =  grid_bilinear_sampling(img_batch, u_warp, v_warp)
         return Q, in_view_mask
 
-    def compute_weighted_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid, rot_mat_batch, trans_batch, use_backproj=True, use_ssim=True, levels=None):
-        bundle_size = rot_mat_batch.size(0)+1
-        inv_rot_mat_batch, inv_trans_batch = inv_rigid_transformation(rot_mat_batch, trans_batch)
-        src_pyramid = []
-        ref_pyramid = []
-        depth_pyramid = []
-        if levels is None:
-            levels = range(self.pyramid_layer_num)
-        # for level_idx in range(len(ref_frames_pyramid)):
-        for level_idx in levels:
-        # for level_idx in range(3):
-            ref_frame = ref_frames_pyramid[level_idx].unsqueeze(0).repeat(bundle_size-1, 1, 1, 1)
-            src_frame = src_frames_pyramid[level_idx]
-            ref_depth = ref_inv_depth_pyramid[level_idx].unsqueeze(0).repeat(bundle_size-1, 1, 1)
-            src_depth = src_inv_depth_pyramid[level_idx]
-            # print(src_depth.size())
-            ref_pyramid.append(torch.cat((ref_frame,
-                                    src_frame,
-                                    src_frame[(0,bundle_size-2), :, :, :]), 0)/127.5)
-            src_pyramid.append(torch.cat((src_frame,
-                                    ref_frame,
-                                    src_frame[(bundle_size-2,0), :, :, :]), 0)/127.5)
-            depth_pyramid.append(torch.cat((ref_depth,
-                                    src_depth,
-                                    src_depth[(0,bundle_size-2), :, :]),0))
-
-
-        rot_mat = torch.cat((rot_mat_batch,
-                            inv_rot_mat_batch,
-                            rot_mat_batch[(bundle_size-2,0), :, :].bmm(inv_rot_mat_batch[(0, bundle_size-2), :, :])) ,0)
-        trans = torch.cat((trans_batch,
-                           inv_trans_batch,
-                           rot_mat_batch[(bundle_size-2,0), :, :].bmm(inv_trans_batch[(0,bundle_size-2),:].unsqueeze(-1)).squeeze(-1)
-                                + trans_batch[(bundle_size-2,0), :]), 0)
-
-        loss = 0
-
-        frames_warp_pyramid = []
-        ref_frame_warp_pyramid = []
-
-        # for level_idx in range(len(ref_pyramid)):
-        # for level_idx in range(3):
-        for level_idx in levels:
-            # print(depth_pyramid[level_idx].size())
-            _, h, w = depth_pyramid[level_idx].size()
-            warp_img, in_view_mask = self.warp_batch_func(
-                    src_pyramid[level_idx],
-                    depth_pyramid[level_idx],
-                    level_idx, rot_mat, trans)
-            warp_img = warp_img.view((bundle_size-1)*2+2, IMG_CHAN, h, w)
-            in_view_mask = in_view_mask.view((bundle_size-1)*2+2, 1, h, w)
-            in_view_mask_expand = in_view_mask.expand((bundle_size-1)*2+2, IMG_CHAN, h, w)
-            in_view_mask_expand_crop = in_view_mask_expand[:, :, 1:-1, 1:-1]
-            rgb_loss = ((ref_pyramid[level_idx] - warp_img).abs()*in_view_mask_expand)
-            if use_ssim and level_idx<1:
-                # print("compute ssim loss------")
-                warp_mu, warp_sigma = compute_img_stats(warp_img)
-                ref_mu, ref_sigma = compute_img_stats(ref_pyramid[level_idx])
-                ssim = compute_SSIM(ref_pyramid[level_idx],
-                                ref_mu,
-                                ref_sigma,
-                                warp_img,
-                                warp_mu,
-                                warp_sigma)
-                ssim = (ssim*in_view_mask_expand_crop)
-                weights = (1-(-self.laplacian_func(ref_pyramid[level_idx], do_normalize=False)).exp())
-                print(ssim.size())
-                print(weights.size())
-                loss += .85*ssim.mean() + .15*rgb_loss.mean()
-                # if level_idx == 1:
-                #     loss += .85*ssim+.15*rgb_loss
-                # else:
-                #     loss += .85*ssim+.15*rgb_loss
-            else:
-                loss += rgb_loss
-
-            frames_warp_pyramid.append(warp_img*127.5)
-            ref_frame_warp_pyramid.append(ref_pyramid[level_idx]*127.5)
-
-        return loss, loss, frames_warp_pyramid, ref_frame_warp_pyramid
 
     def compute_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid, rot_mat_batch, trans_batch, use_backproj=True, use_ssim=True, levels=None):
         bundle_size = rot_mat_batch.size(0)+1
@@ -783,6 +639,7 @@ class DirectVO(nn.Module):
 
                     trans_list = []
                     rot_list = []
+                    # print(photometric_cost)
                     for k in range(frame_num):
                         if photometric_cost[k] < max_photometric_cost[k]:
                             rot_list.append(rot_mat_batch_new[k:k+1, :, :])

@@ -116,7 +116,7 @@ class SfMKernel(nn.Module):
         # compute smoothness smoothness loss
         # instead of directly compute the loss on the finest level, it's evaluated on the downsamples.
         inv_depth0_pyramid = self.pyramid_func(inv_depth_norm_pyramid[0], do_detach=False)
-        smoothness_cost = self.vo.multi_scale_image_aware_smoothness_cost(inv_depth0_pyramid, frames_pyramid, levels=[1,2,3], type=self.smooth_term) \
+        smoothness_cost = self.vo.multi_scale_image_aware_smoothness_cost(inv_depth0_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term) \
                             + self.vo.multi_scale_image_aware_smoothness_cost(inv_depth_norm_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term)
 
         cost = photometric_cost + lambda_S*smoothness_cost

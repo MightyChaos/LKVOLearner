@@ -4,7 +4,7 @@ from ImagePyramid import ImagePyramidLayer
 import torch.nn as nn
 import torch
 import numpy as np
-
+from torch.autograd import Variable
 from timeit import default_timer as timer
 
 class FlipLR(nn.Module):
@@ -16,7 +16,7 @@ class FlipLR(nn.Module):
 
 
     def forward(self, input):
-        return input.index_select(self.dim_w, self.inv_indices)
+        return input.index_select(self.dim_w, Variable(self.inv_indices))
 
 
 
@@ -58,10 +58,10 @@ class LKVOKernel(nn.Module):
         super(LKVOKernel, self).__init__()
         self.img_size = img_size
         self.fliplr_func = FlipLR(imW=img_size[1], dim_w=3)
-        self.vo = DirectVO(imH=img_size[0], imW=img_size[1], pyramid_layer_num=5)
+        self.vo = DirectVO(imH=img_size[0], imW=img_size[1], pyramid_layer_num=4)
         self.pose_net = PoseNet(3)
         self.depth_net = VggDepthEstimator(img_size)
-        self.pyramid_func = ImagePyramidLayer(chan=1, pyramid_layer_num=5)
+        self.pyramid_func = ImagePyramidLayer(chan=1, pyramid_layer_num=4)
         self.smooth_term = smooth_term
 
 
@@ -93,14 +93,6 @@ class LKVOKernel(nn.Module):
         inv_depth_pyramid = self.depth_net.forward((frames-127)/127)
         inv_depth_mean_ten = inv_depth_pyramid[0].mean()*0.1
 
-
-        #
-        # inv_depth0_pyramid = self.pyramid_func(inv_depth_pyramid[0], do_detach=False)
-        # ref_inv_depth_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth_pyramid]
-        # ref_inv_depth0_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth0_pyramid]
-        # src_inv_depth_pyramid = [depth[src_frame_idx, :, :] for depth in inv_depth_pyramid]
-        # src_inv_depth0_pyramid = [depth[src_frame_idx, :, :] for depth in inv_depth0_pyramid]
-
         inv_depth_norm_pyramid = [depth/inv_depth_mean_ten for depth in inv_depth_pyramid]
         inv_depth0_pyramid = self.pyramid_func(inv_depth_norm_pyramid[0], do_detach=False)
         ref_inv_depth_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth_norm_pyramid]
@@ -112,7 +104,7 @@ class LKVOKernel(nn.Module):
         # init_pose with pose CNN
         p = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
         rot_mat_batch = self.vo.twist2mat_batch_func(p[0,:,0:3]).contiguous()
-        trans_batch = p[0,:,3:6].contiguous()
+        trans_batch = p[0,:,3:6].contiguous()*inv_depth_mean_ten
         # fine tune pose with direct VO
         rot_mat_batch, trans_batch = self.vo.update_with_init_pose(src_frames_pyramid[0:lk_level], max_itr_num=max_lk_iter_num, rot_mat_batch=rot_mat_batch, trans_batch=trans_batch)
         # rot_mat_batch, trans_batch = \
@@ -134,8 +126,8 @@ if __name__  == "__main__":
 
     dataset = KITTIdataset()
     dataloader = DataLoader(dataset, batch_size=3,
-                            shuffle=True, num_workers=4, pin_memory=True)
-    lkvolearner = LKVOLearner(gpu_ids = [0, 1, 2])
+                            shuffle=True, num_workers=2, pin_memory=True)
+    lkvolearner = LKVOLearner(gpu_ids = [0])
     def weights_init(m):
         classname = m.__class__.__name__
         if isinstance(m, torch.nn.Conv2d) or isinstance(m, torch.nn.ConvTranspose2d):
