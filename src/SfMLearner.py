@@ -100,7 +100,7 @@ class SfMKernel(nn.Module):
         inv_depth_mean_ten = inv_depth_pyramid[0].mean()*0.1 #uncommment this to use normalization
 
         # normalize
-        trans_batch = trans_batch/inv_depth_mean_ten
+        trans_batch = trans_batch*inv_depth_mean_ten
         inv_depth_norm_pyramid = [depth/inv_depth_mean_ten for depth in inv_depth_pyramid]
 
         ref_inv_depth_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth_norm_pyramid]
