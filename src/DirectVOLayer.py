@@ -177,10 +177,6 @@ def compute_photometric_cost_norm(img_diff, mask):
     # print(mask.size())
     return cost_norm * (1 / 127.5), (num_in_view / mask.size(1)).min()
 
-# def compute_feat_cost(feat_diff, mask):
-#     k = feat_diff.size(1)
-#     cost = (huber_loss(feat_diff/255, 0) * mask.unsqueeze(1).expand_as(feat_diff))
-#     return cost
 
 def gradient(input, do_normalize=False):
     if input.dim() == 2:
@@ -614,17 +610,12 @@ class DirectVO(nn.Module):
                 temporal_grad = pixel_warp - self.ref_frame_pyramid[level_idx].view(3, -1).unsqueeze(0).expand_as(pixel_warp)
 
                 photometric_cost, min_perc_in_view = compute_photometric_cost_norm(temporal_grad.data, in_view_mask.data)
-                # print(photometric_cost)
-                # print(max_photometric_cost)
-                # print(min_perc_in_view)
-                # print((photometric_cost < max_photometric_cost).max())
+
                 if min_perc_in_view < .5:
                     break
 
                 if (photometric_cost < max_photometric_cost).max()>0:
-                    # print(photometric_cost)
-                    # print(i)
-                    # print(photometric_cost)
+
                     trans_batch_prev = trans_batch
                     rot_mat_batch_prev = rot_mat_batch
 
@@ -650,9 +641,6 @@ class DirectVO(nn.Module):
                             trans_list.append(trans_batch[k:k+1, :])
                     rot_mat_batch = torch.cat(rot_list, 0)
                     trans_batch = torch.cat(trans_list, 0)
-                    # if photometric_cost[k] < max_photometric_cost[k]:
-                    #     trans_batch = d_rot_mat_batch.bmm(trans_batch.viewd_rot_mat_batch = self.twist2mat_batch_func(-dp[:, 0:3])(frame_num, 3, 1)).view(frame_num, 3) - dp[:, 3:6]
-                    #     rot_mat_batch = d_rot_mat_batch.bmm(rot_mat_batch)
                 else:
                     break
             rot_mat_batch = rot_mat_batch_prev
