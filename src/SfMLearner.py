@@ -1,5 +1,5 @@
 from DirectVOLayer import DirectVO
-from networks import VggDepthEstimator, PoseNet
+from networks import VggDepthEstimator, PoseNet, PoseExpNet
 from ImagePyramid import ImagePyramidLayer
 import torch.nn as nn
 import torch
@@ -24,16 +24,22 @@ class FlipLR(nn.Module):
 
 
 class SfMLearner(nn.Module):
-    def __init__(self, img_size=[128, 416], ref_frame_idx=1, lambda_S=.5, use_ssim=True, smooth_term = 'lap', gpu_ids=[0]):
+    def __init__(self, img_size=[128, 416], ref_frame_idx=1,
+        lambda_S=.5, lambda_E=0.01, use_ssim=True, smooth_term = 'lap',
+        use_expl_mask=False, gpu_ids=[0]):
         super(SfMLearner, self).__init__()
-        self.sfmkernel = nn.DataParallel(SfMKernel(img_size, smooth_term = smooth_term), device_ids=gpu_ids)
+        self.sfmkernel = nn.DataParallel(SfMKernel(img_size, smooth_term = smooth_term, use_expl_mask=use_expl_mask),
+                            device_ids=gpu_ids)
         self.ref_frame_idx = ref_frame_idx
         self.lambda_S = lambda_S
+        self.lambda_E = lambda_E
         self.use_ssim = use_ssim
+        self.use_expl_mask = use_expl_mask
 
     def forward(self, frames, camparams, max_lk_iter_num=10):
         cost, photometric_cost, smoothness_cost, ref_frame, ref_inv_depth \
-            = self.sfmkernel.forward(frames, camparams, self.ref_frame_idx, self.lambda_S, use_ssim=self.use_ssim)
+            = self.sfmkernel.forward(frames, camparams, self.ref_frame_idx,
+            self.lambda_S, self.lambda_E, use_ssim=self.use_ssim)
         return cost.mean(), photometric_cost.mean(), smoothness_cost.mean(), ref_frame, ref_inv_depth
 
     def save_model(self, file_path):
@@ -60,18 +66,22 @@ class SfMKernel(nn.Module):
     """
      only support single training isinstance
     """
-    def __init__(self, img_size=[128, 416], smooth_term = 'lap'):
+    def __init__(self, img_size=[128, 416], smooth_term = 'lap', use_expl_mask=False):
         super(SfMKernel, self).__init__()
         self.img_size = img_size
         self.fliplr_func = FlipLR(imW=img_size[1], dim_w=3)
         self.vo = DirectVO(imH=img_size[0], imW=img_size[1], pyramid_layer_num=4)
         self.depth_net = VggDepthEstimator(img_size)
-        self.pose_net = PoseNet(3)
+        if use_expl_mask:
+            self.pose_net = PoseExpNet(3)
+        else:
+            self.pose_net = PoseNet(3)
         self.pyramid_func = ImagePyramidLayer(chan=1, pyramid_layer_num=4)
         self.smooth_term = smooth_term
+        self.use_expl_mask = use_expl_mask
 
 
-    def forward(self, frames, camparams, ref_frame_idx, lambda_S=.5, do_data_augment=True, use_ssim=True):
+    def forward(self, frames, camparams, ref_frame_idx, lambda_S=.5, lambda_E=.01, do_data_augment=True, use_ssim=True):
         assert(frames.size(0) == 1 and frames.dim() == 5)
         frames = frames.squeeze(0)
         camparams = camparams.squeeze(0).data
@@ -92,7 +102,20 @@ class SfMKernel(nn.Module):
         self.vo.setCamera(fx=camparams[0], cx=camparams[2],
                             fy=camparams[4], cy=camparams[5])
         self.vo.init_xy_pyramid(ref_frame_pyramid)
-        p = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
+        if self.use_expl_mask:
+            p, expl_mask_pyramid = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
+            expl_mask_reg_cost = 0
+            for mask in expl_mask_pyramid:
+                expl_mask_reg_cost += mask.mean()
+            ref_expl_mask_pyramid = [mask.squeeze(0)[ref_frame_idx, ...] for mask in expl_mask_pyramid]
+            src_expl_mask_pyramid = [mask.squeeze(0)[src_frame_idx, ...] for mask in expl_mask_pyramid]
+
+        else:
+            p = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
+            ref_expl_mask_pyramid = None
+            src_expl_mask_pyramid = None
+            expl_mask_reg_cost = 0
+
         rot_mat_batch = self.vo.twist2mat_batch_func(p[0,:,0:3])
         trans_batch = p[0,:,3:6]
 
@@ -106,18 +129,20 @@ class SfMKernel(nn.Module):
         ref_inv_depth_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth_norm_pyramid]
         src_inv_depth_pyramid = [depth[src_frame_idx, :, :] for depth in inv_depth_norm_pyramid]
 
-        photometric_cost, reproj_cost, _ , _ = self.vo.compute_phtometric_loss(
+        photometric_cost = self.vo.compute_phtometric_loss(
                                                 ref_frame_pyramid,
                                                 src_frames_pyramid,
                                                 ref_inv_depth_pyramid,
                                                 src_inv_depth_pyramid,
                                                 rot_mat_batch, trans_batch,
-                                                levels=[0,1,2,3], use_ssim=use_ssim)
+                                                levels=[0,1,2,3], use_ssim=use_ssim,
+                                                ref_expl_mask_pyramid=ref_expl_mask_pyramid,
+                                                src_expl_mask_pyramid=src_expl_mask_pyramid)
         # compute smoothness smoothness loss
         # instead of directly compute the loss on the finest level, it's evaluated on the downsamples.
         inv_depth0_pyramid = self.pyramid_func(inv_depth_norm_pyramid[0], do_detach=False)
         smoothness_cost = self.vo.multi_scale_image_aware_smoothness_cost(inv_depth0_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term) \
                             + self.vo.multi_scale_image_aware_smoothness_cost(inv_depth_norm_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term)
 
-        cost = photometric_cost + lambda_S*smoothness_cost
+        cost = photometric_cost + lambda_S*smoothness_cost + lambda_E*expl_mask_reg_cost
         return cost, photometric_cost, smoothness_cost, ref_frame_pyramid[0], ref_inv_depth_pyramid[0]*inv_depth_mean_ten

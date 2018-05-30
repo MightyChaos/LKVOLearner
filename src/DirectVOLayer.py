@@ -378,7 +378,11 @@ class DirectVO(nn.Module):
         return Q, in_view_mask
 
 
-    def compute_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid, rot_mat_batch, trans_batch, use_backproj=True, use_ssim=True, levels=None):
+    def compute_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid,
+                                rot_mat_batch, trans_batch,
+                                use_ssim=True, levels=None,
+                                ref_expl_mask_pyramid=None,
+                                src_expl_mask_pyramid=None):
         bundle_size = rot_mat_batch.size(0)+1
         inv_rot_mat_batch, inv_trans_batch = inv_rigid_transformation(rot_mat_batch, trans_batch)
         src_pyramid = []
@@ -386,6 +390,18 @@ class DirectVO(nn.Module):
         depth_pyramid = []
         if levels is None:
             levels = range(self.pyramid_layer_num)
+
+        use_expl_mask = not (ref_expl_mask_pyramid is None \
+                            or src_expl_mask_pyramid is None)
+        if use_expl_mask:
+            expl_mask_pyramid = []
+            for level_idx in levels:
+                ref_mask = ref_expl_mask_pyramid[level_idx].unsqueeze(0).repeat(bundle_size-1,1,1)
+                src_mask = src_expl_mask_pyramid[level_idx]
+                expl_mask_pyramid.append(torch.cat(
+                    (ref_mask, src_mask), 0))
+
+
         # for level_idx in range(len(ref_frames_pyramid)):
         for level_idx in levels:
         # for level_idx in range(3):
@@ -422,8 +438,12 @@ class DirectVO(nn.Module):
                     depth_pyramid[level_idx],
                     level_idx, rot_mat, trans)
             warp_img = warp_img.view((bundle_size-1)*2, IMG_CHAN, h, w)
-            in_view_mask_expand = in_view_mask.view((bundle_size-1)*2, 1, h, w).expand((bundle_size-1)*2, IMG_CHAN, h, w)
-            rgb_loss = ((ref_pyramid[level_idx] - warp_img).abs()*in_view_mask_expand).mean()
+            if use_expl_mask:
+                mask = in_view_mask.view(-1,h,w)*expl_mask_pyramid[level_idx]
+            else:
+                mask = in_view_mask
+            mask_expand = mask.view((bundle_size-1)*2, 1, h, w).expand((bundle_size-1)*2, IMG_CHAN, h, w)
+            rgb_loss = ((ref_pyramid[level_idx] - warp_img).abs()*mask_expand).mean()
             if use_ssim and level_idx<1:
                 # print("compute ssim loss------")
                 warp_mu, warp_sigma = compute_img_stats(warp_img)
@@ -434,15 +454,16 @@ class DirectVO(nn.Module):
                                 warp_img,
                                 warp_mu,
                                 warp_sigma)
-                ssim_loss = (ssim*in_view_mask_expand[:,:,1:-1,1:-1]).mean()
+                ssim_loss = (ssim*mask_expand[:,:,1:-1,1:-1]).mean()
                 loss += .85*ssim_loss+.15*rgb_loss
             else:
                 loss += rgb_loss
 
-            frames_warp_pyramid.append(warp_img*127.5)
-            ref_frame_warp_pyramid.append(ref_pyramid[level_idx]*127.5)
-
-        return loss, loss, frames_warp_pyramid, ref_frame_warp_pyramid
+        #     frames_warp_pyramid.append(warp_img*127.5)
+        #     ref_frame_warp_pyramid.append(ref_pyramid[level_idx]*127.5)
+        #
+        # return loss, frames_warp_pyramid, ref_frame_warp_pyramid
+        return loss
 
     def compute_smoothness_cost(self, inv_depth):
         x = self.laplacian_func(inv_depth)

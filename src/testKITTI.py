@@ -16,7 +16,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset_root", type=str, default="/newfoundland/chaoyang/kitti", help="dataset root path")
 parser.add_argument("--test_file_list", type=str, default="/newfoundland/chaoyang/SfMLearner/data/kitti/test_files_eigen.txt", help="test file list")
 parser.add_argument("--ckpt_file", type=str, default=None, help="checkpoint file")
-parser.add_argument("--output_path", type=str, default="pred_depths", help="output_path")
+parser.add_argument("--output_path", type=str, default="pred_depths", help="output path")
 parser.add_argument("--use_pp", default=False, action="store_true", help='use post processing')
 
 FLAGS = parser.parse_args()

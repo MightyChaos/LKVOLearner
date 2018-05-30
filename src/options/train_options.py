@@ -8,6 +8,7 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--use_ssim', default=False, action='store_true', help='use ssim loss')
         self.parser.add_argument('--smooth_term', type=str, default='lap', help='smoothness term type, choose between lap, 1st, 2nd')
         self.parser.add_argument('--lambda_S', type=float, default=.01, help='smoothness cost weight')
+        self.parser.add_argument('--lambda_E', type=float, default=.01, help='explainable mask regulariation cost weight')
         self.parser.add_argument('--epoch_num', type=int, default=20, help='number of epochs for training')
         self.parser.add_argument('--display_freq', type=int, default=100, help='frequency of showing training results on screen')
         self.parser.add_argument('--print_freq', type=int, default=10, help='frequency of showing training results on console')
