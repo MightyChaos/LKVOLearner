@@ -1,4 +1,5 @@
 # Learning Depth from Monocular Videos using Direct Methods
+<img align="center" src="https://github.com/MightyChaos/MightyChaos.github.io/blob/master/projects/cvpr18_chaoyang/demo.gif">
 
 Implementation of the methods in "[Learning Depth from Monocular Videos using Direct Methods](http://openaccess.thecvf.com/content_cvpr_2018/papers/Wang_Learning_Depth_From_CVPR_2018_paper.pdf)".
 If you find this code useful, please cite the paper:
