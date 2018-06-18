@@ -375,7 +375,7 @@ class DirectVO(nn.Module):
             batch_size, N) / 2 ** level_idx
 
         Q, in_view_mask =  grid_bilinear_sampling(img_batch, u_warp, v_warp)
-        return Q, in_view_mask
+        return Q, in_view_mask * (z.view_as(in_view_mask)>1e-10).float()
 
 
     def compute_phtometric_loss(self, ref_frames_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, src_inv_depth_pyramid,

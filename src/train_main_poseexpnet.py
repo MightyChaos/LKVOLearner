@@ -68,7 +68,7 @@ for epoch in range(max(0, opt.which_epoch), opt.epoch_num+1):
         optimizer.zero_grad()
         frames = Variable(data[0].float().cuda())
         camparams = Variable(data[1])
-        cost, photometric_cost, smoothness_cost, frames, inv_depths = \
+        cost, photometric_cost, smoothness_cost, frames, inv_depths, expl_mask = \
             sfmlearner.forward(frames, camparams)
         # print(frames.size())
         # print(inv_depths.size())
@@ -101,13 +101,17 @@ for epoch in range(max(0, opt.which_epoch), opt.epoch_num+1):
             # depth_vis = vis_depthmap(inv_depths.data[:,1,:,:].contiguous().view(-1,opt.imW).cpu()).numpy().astype(np.uint8)
             frame_vis = frames.data.permute(1,2,0).contiguous().cpu().numpy().astype(np.uint8)
             depth_vis = vis_depthmap(inv_depths.data.cpu()).numpy().astype(np.uint8)
+            mask_vis = (expl_mask.data.cpu()*255).unsqueeze(2).repeat(1, 1, 3).numpy().astype(np.uint8)
+            # print(mask_vis.shape)
             visualizer.display_current_results(
                             OrderedDict([('%s frame' % (opt.name), frame_vis),
-                                    ('%s inv_depth' % (opt.name), depth_vis)]),
+                                    ('%s inv_depth' % (opt.name), depth_vis),
+                                    ('%s mask' % (opt.name), mask_vis)]),
                                     epoch)
             sio.savemat(os.path.join(opt.checkpoints_dir, 'depth_%s.mat' % (step_num)),
                 {'D': inv_depths.data.cpu().numpy(),
-                 'I': frame_vis})
+                 'I': frame_vis,
+                 'M': mask_vis})
 
         if np.mod(step_num, opt.save_latest_freq)==0:
             print("cache model....")

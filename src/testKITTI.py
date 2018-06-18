@@ -51,7 +51,7 @@ for filename in test_files:
     filename = filename.split()[0]
     im_path = os.path.join(dataset_root, filename)
     img_pil = Image.open(im_path).resize((img_size[1], img_size[0]), Image.ANTIALIAS)
-    img_pil.save('kitti_test_images/%04d.png'%(i))
+    # img_pil.save('kitti_test_images/%04d.png'%(i))
     img = np.array(img_pil)
     # print(img.shape)
     img = img.transpose(2, 0, 1)

@@ -104,7 +104,7 @@ class LKVOKernel(nn.Module):
         # init_pose with pose CNN
         p = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
         rot_mat_batch = self.vo.twist2mat_batch_func(p[0,:,0:3]).contiguous()
-        trans_batch = p[0,:,3:6].contiguous()*inv_depth_mean_ten
+        trans_batch = p[0,:,3:6].contiguous()#*inv_depth_mean_ten
         # fine tune pose with direct VO
         rot_mat_batch, trans_batch = self.vo.update_with_init_pose(src_frames_pyramid[0:lk_level], max_itr_num=max_lk_iter_num, rot_mat_batch=rot_mat_batch, trans_batch=trans_batch)
         # rot_mat_batch, trans_batch = \

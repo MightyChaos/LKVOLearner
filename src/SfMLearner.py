@@ -37,10 +37,10 @@ class SfMLearner(nn.Module):
         self.use_expl_mask = use_expl_mask
 
     def forward(self, frames, camparams, max_lk_iter_num=10):
-        cost, photometric_cost, smoothness_cost, ref_frame, ref_inv_depth \
+        cost, photometric_cost, smoothness_cost, ref_frame, ref_inv_depth, ref_expl_mask \
             = self.sfmkernel.forward(frames, camparams, self.ref_frame_idx,
             self.lambda_S, self.lambda_E, use_ssim=self.use_ssim)
-        return cost.mean(), photometric_cost.mean(), smoothness_cost.mean(), ref_frame, ref_inv_depth
+        return cost.mean(), photometric_cost.mean(), smoothness_cost.mean(), ref_frame, ref_inv_depth, ref_expl_mask
 
     def save_model(self, file_path):
         torch.save(self.cpu().sfmkernel.module.depth_net.state_dict(),
@@ -109,12 +109,14 @@ class SfMKernel(nn.Module):
                 expl_mask_reg_cost += mask.mean()
             ref_expl_mask_pyramid = [mask.squeeze(0)[ref_frame_idx, ...] for mask in expl_mask_pyramid]
             src_expl_mask_pyramid = [mask.squeeze(0)[src_frame_idx, ...] for mask in expl_mask_pyramid]
+            expl_mask = ref_expl_mask_pyramid[0]
 
         else:
             p = self.pose_net.forward((frames.view(1, -1, frames.size(2), frames.size(3))-127) / 127)
             ref_expl_mask_pyramid = None
             src_expl_mask_pyramid = None
             expl_mask_reg_cost = 0
+            expl_mask = None
 
         rot_mat_batch = self.vo.twist2mat_batch_func(p[0,:,0:3])
         trans_batch = p[0,:,3:6]
@@ -123,7 +125,7 @@ class SfMKernel(nn.Module):
         inv_depth_mean_ten = inv_depth_pyramid[0].mean()*0.1 #uncommment this to use normalization
 
         # normalize
-        trans_batch = trans_batch*inv_depth_mean_ten
+        #trans_batch = trans_batch*inv_depth_mean_ten
         inv_depth_norm_pyramid = [depth/inv_depth_mean_ten for depth in inv_depth_pyramid]
 
         ref_inv_depth_pyramid = [depth[ref_frame_idx, :, :] for depth in inv_depth_norm_pyramid]
@@ -144,5 +146,6 @@ class SfMKernel(nn.Module):
         smoothness_cost = self.vo.multi_scale_image_aware_smoothness_cost(inv_depth0_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term) \
                             + self.vo.multi_scale_image_aware_smoothness_cost(inv_depth_norm_pyramid, frames_pyramid, levels=[2,3], type=self.smooth_term)
 
-        cost = photometric_cost + lambda_S*smoothness_cost + lambda_E*expl_mask_reg_cost
-        return cost, photometric_cost, smoothness_cost, ref_frame_pyramid[0], ref_inv_depth_pyramid[0]*inv_depth_mean_ten
+        cost = photometric_cost + lambda_S*smoothness_cost - lambda_E*expl_mask_reg_cost
+        
+        return cost, photometric_cost, smoothness_cost, ref_frame_pyramid[0], ref_inv_depth_pyramid[0]*inv_depth_mean_ten, expl_mask
