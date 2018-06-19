@@ -21,10 +21,10 @@ year = {2018}
 
 
 ## Training
-- ### data preparation
+### data preparation
 We refer "[SfMLeaner](https://github.com/tinghuiz/SfMLearner)" to prepare the training data from KITTI. We assume the processed data is put in directory "./data_kitti/".
 
-- ### Training with different pose prediction modules
+### training with different pose prediction modules
 Start visdom server before for inspecting learning progress before starting the training process.
 ```
 python -m visdom.server -port 8009
