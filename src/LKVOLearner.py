@@ -106,7 +106,7 @@ class LKVOKernel(nn.Module):
         src_inv_depth0_pyramid = [depth[src_frame_idx, :, :] for depth in inv_depth0_pyramid]
 
         rot_mat_batch, trans_batch = \
-            self.vo.forward(ref_frame_pyramid, src_frames_pyramid, ref_inv_depth_pyramid, max_itr_num=max_lk_iter_num)
+            self.vo.forward(ref_frame_pyramid, src_frames_pyramid, ref_inv_depth0_pyramid, max_itr_num=max_lk_iter_num)
         #
         # smoothness_cost = self.vo.multi_scale_smoothness_cost(inv_depth_pyramid)
         # smoothness_cost += self.vo.multi_scale_smoothness_cost(inv_depth0_pyramid)
