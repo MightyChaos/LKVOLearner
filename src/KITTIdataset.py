@@ -17,9 +17,15 @@ class KITTIdataset(Dataset):
             for line in file:
                 frame_path = line.strip()
                 seq_path, frame_name = frame_path.split(" ")
+                # print(seq_path)
+                if seq_path in ['2011_09_26_drive_0119_sync_02', '2011_09_28_drive_0225_sync_02',
+                                '2011_09_29_drive_0108_sync_02', '2011_09_30_drive_0072_sync_02',
+                                '2011_10_03_drive_0058_sync_02', '2011_09_29_drive_0108_sync_03']:
+                    print(seq_path)
+                    continue
                 frame_path = os.path.join(seq_path, frame_name)
                 self.frame_pathes.append(frame_path)
-                print(frame_path)
+                # print(frame_path)
         # self.frame_pathes = self.frame_pathes[0:40000:800]
 
     def __len__(self):

@@ -4,6 +4,7 @@ from ImagePyramid import ImagePyramidLayer
 import torch.nn as nn
 import torch
 import numpy as np
+from torch.autograd import Variable
 
 from timeit import default_timer as timer
 
